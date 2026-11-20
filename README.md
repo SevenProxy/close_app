@@ -1,35 +1,79 @@
+<div align="center">
+
 # close_app
 
-A small Linux GUI for finding processes and killing them by PID. I built it because Vesktop survives `Win+Q` under Hyprland — the window disappears, the process stays. Now I search for `vesktop`, tick the box, and send it a SIGTERM.
+**A small Linux process killer for the stubborn ones.**
 
-The UI is egui on wgpu, with the backend pinned to Vulkan. There is no GL fallback, so if your Vulkan setup is broken the app fails at startup instead of quietly rendering through something else.
+[![CI](https://github.com/SevenProxy/close_app/actions/workflows/ci.yml/badge.svg)](https://github.com/SevenProxy/close_app/actions/workflows/ci.yml)
+![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)
+![Renderer](https://img.shields.io/badge/render-Vulkan-5b4be1.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-## Build and run
+</div>
 
-You need a Rust toolchain with 2024 edition support and a working Vulkan driver (Mesa's `lvp` is enough if you have no real GPU).
+---
+
+Vesktop under Hyprland has a habit of surviving `Win+Q`: the window goes away, the process doesn't. This is the two-click fix — search for `vesktop`, tick the row, send SIGTERM.
+
+The UI is egui on wgpu with the backend pinned to Vulkan. There is no GL fallback, so a broken Vulkan setup fails loudly at startup instead of quietly rendering through something else.
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Gerenciador de processos                   Vulkan   │
+│  Buscar: [ vesktop            ]  [Atualizar] [Auto]  │
+├──────────────────────────────────────────────────────┤
+│  PID    Nome       Comando                Memória    │
+│  4217   vesktop    /usr/bin/vesktop       184.2 MiB  │
+│  4231   vesktop    /usr/bin/vesktop --gpu    61 MiB  │
+├──────────────────────────────────────────────────────┤
+│  2 selecionado(s)      [Encerrar] [Forçar]           │
+└──────────────────────────────────────────────────────┘
+```
+
+## Requirements
+
+- Rust with 2024 edition support
+- A working Vulkan driver; Mesa's `lvp` is enough if you have no real GPU
+- Wayland or X11 — both are compiled into the binary
+
+## Build
 
 ```sh
 cargo build --release
 ./target/release/close_app
 ```
 
-Or just `cargo run` while hacking on it. Wayland and X11 are both enabled in the eframe build.
+`cargo run` is fine for poking around. No environment tweaks are needed: the Vulkan backend is set in code, in `src/main.rs`.
 
-## Using it
+## Usage
 
-Type in the search box — it matches PID, process name and command line. Spaces split terms, so `vesktop electron` narrows things down. Refresh happens every two seconds by default; the checkbox next to it turns that off.
+The search box matches PID, process name and command line. Spaces split terms and all of them have to match, so `vesktop electron` narrows things down. The list refreshes every two seconds unless you turn off **Auto**.
 
-Tick the processes you want, then use one of the buttons at the bottom:
+Tick the processes you care about, then pick an action at the bottom:
 
-- **Encerrar (SIGTERM)** — polite request. If the PID is still alive two seconds later, the app sends SIGKILL on its own.
-- **Forçar (SIGKILL)** — straight to the uncatchable signal. There is a confirmation dialog for both, because mis-clicking in a process list is annoying.
+| Button | What it does |
+| --- | --- |
+| **Encerrar (SIGTERM)** | Asks nicely. If the PID is still alive two seconds later, SIGKILL goes out automatically. |
+| **Forçar (SIGKILL)** | Straight to the uncatchable signal. |
 
-Nothing happens to PID 0, PID 1, or the app itself. Anything else is fair game as long as your user is allowed to signal it; failures show up in the status bar instead of being swallowed.
+Both go through a confirmation dialog. Mis-clicking in a process list is annoying.
 
-## Layout
+## Behaviour
 
-- `src/main.rs` — window setup, forces the wgpu backend to Vulkan.
-- `src/processes.rs` — reads `/proc` through `sysinfo`, filtering and signal sending.
-- `src/app.rs` — the egui layout, selection state, and the delayed SIGKILL escalation.
+- PID 0, PID 1 and the app itself are left alone.
+- Signalling a process owned by another user fails with a message in the status bar instead of silently doing nothing.
+- Selections survive refreshes while the PID still exists.
+- Zombie processes count as already gone and never get signalled.
 
-Selections survive the periodic refresh as long as the PID still exists. Zombies are treated as already gone.
+## Project layout
+
+| File | Job |
+| --- | --- |
+| `src/main.rs` | Window setup and the Vulkan backend pin. |
+| `src/processes.rs` | `/proc` enumeration through `sysinfo`, filtering, signalling. |
+| `src/app.rs` | egui layout, selection state, delayed SIGKILL escalation. |
+| `.github/workflows/ci.yml` | Formatting, Clippy, tests, release build and artifact upload. |
+
+## License
+
+[MIT](LICENSE)

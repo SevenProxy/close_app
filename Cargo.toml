@@ -2,6 +2,9 @@
 name = "close_app"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Linux GUI for finding and terminating processes by PID"
+repository = "https://github.com/SevenProxy/close_app"
 
 [dependencies]
 eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11", "clipboard"] }
