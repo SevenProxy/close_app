@@ -1,6 +1,6 @@
 <div align="center">
 
-# close_app
+# Close App
 
 **A small Linux process killer for the stubborn ones.**
 
