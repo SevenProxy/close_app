@@ -36,7 +36,9 @@ impl ProcessInfo {
 
     pub fn matches(&self, query: &str) -> bool {
         let query = query.trim();
-        query.is_empty() || self.name.eq_ignore_ascii_case(query)
+        let pid = self.pid.to_string();
+
+        query.is_empty() || self.name.eq_ignore_ascii_case(query) || pid.contains(query)
     }
 }
 
@@ -114,12 +116,14 @@ mod tests {
     }
 
     #[test]
-    fn query_matches_process_name_exactly() {
+    fn query_matches_process_name_or_pid() {
         let process = sample();
         assert!(process.matches("vesktop"));
         assert!(process.matches("VESKTOP"));
+        assert!(process.matches("1234"));
+        assert!(process.matches("23"));
         assert!(!process.matches("ves"));
-        assert!(!process.matches("1234"));
+        assert!(!process.matches("999"));
         assert!(!process.matches("vesktop enable"));
         assert!(!process.matches("discord"));
     }

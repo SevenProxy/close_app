@@ -47,7 +47,7 @@ cargo build --release
 
 ## Usage
 
-Leave the search box empty to see every PID. Typing a name filters the list to processes with that exact name, ignoring case — `vesktop` shows all Vesktop PIDs and nothing else. The list refreshes every two seconds unless you turn off **Auto**.
+Leave the search box empty to see every PID. Typing a name filters the list to processes with that exact name, ignoring case — `vesktop` shows all Vesktop PIDs and nothing else. A numeric query matches part of the PID, so `4217` works too. The list refreshes every two seconds unless you turn off **Auto**.
 
 Tick the processes you care about, then pick an action at the bottom:
 
