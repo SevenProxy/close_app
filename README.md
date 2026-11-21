@@ -60,6 +60,7 @@ Both go through a confirmation dialog. Mis-clicking in a process list is annoyin
 
 ## Behaviour
 
+- The footer shows the crate version and the git hash it was built from. A `-dirty` suffix means the source tree had uncommitted changes.
 - PID 0, PID 1 and the app itself are left alone.
 - Signalling a process owned by another user fails with a message in the status bar instead of silently doing nothing.
 - Selections survive refreshes while the PID still exists.

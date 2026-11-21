@@ -205,6 +205,16 @@ impl eframe::App for ProcessApp {
                 ui.label(format!("{count} selecionado(s)"));
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "v{} ({})",
+                            env!("CARGO_PKG_VERSION"),
+                            env!("CLOSE_APP_BUILD_HASH")
+                        ))
+                        .monospace()
+                        .small()
+                        .weak(),
+                    );
                     ui.label(&self.status);
                 });
             });
