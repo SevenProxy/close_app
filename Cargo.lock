@@ -304,6 +304,7 @@ name = "close_app"
 version = "0.2.0"
 dependencies = [
  "eframe",
+ "egui-pop-phosphor",
  "sysinfo",
 ]
 
@@ -542,6 +543,15 @@ dependencies = [
  "smallvec",
  "unicode-segmentation",
  "web-sys",
+]
+
+[[package]]
+name = "egui-pop-phosphor"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "508f4928508368b3b78ccd06ada328c79b50484a2071c6478f223b9d05cbc327"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

@@ -8,4 +8,5 @@ repository = "https://github.com/SevenProxy/close_app"
 
 [dependencies]
 eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11", "clipboard"] }
+egui-pop-phosphor = "0.15"
 sysinfo = "0.31"
