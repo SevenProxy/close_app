@@ -47,7 +47,7 @@ cargo build --release
 
 ## Usage
 
-The search box matches PID, process name and command line. Spaces split terms and all of them have to match, so `vesktop electron` narrows things down. The list refreshes every two seconds unless you turn off **Auto**.
+Leave the search box empty to see every PID. Typing a name filters the list to processes with that exact name, ignoring case — `vesktop` shows all Vesktop PIDs and nothing else. The list refreshes every two seconds unless you turn off **Auto**.
 
 Tick the processes you care about, then pick an action at the bottom:
 

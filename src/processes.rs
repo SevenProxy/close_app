@@ -36,18 +36,7 @@ impl ProcessInfo {
 
     pub fn matches(&self, query: &str) -> bool {
         let query = query.trim();
-        if query.is_empty() {
-            return true;
-        }
-
-        let name = self.name.to_lowercase();
-        let command = self.command.to_lowercase();
-        let pid = self.pid.to_string();
-
-        query.split_whitespace().all(|term| {
-            let term = term.to_lowercase();
-            pid.contains(&term) || name.contains(&term) || command.contains(&term)
-        })
+        query.is_empty() || self.name.eq_ignore_ascii_case(query)
     }
 }
 
@@ -125,11 +114,13 @@ mod tests {
     }
 
     #[test]
-    fn query_matches_pid_name_and_command() {
+    fn query_matches_process_name_exactly() {
         let process = sample();
-        assert!(process.matches("1234"));
+        assert!(process.matches("vesktop"));
         assert!(process.matches("VESKTOP"));
-        assert!(process.matches("vesktop enable"));
+        assert!(!process.matches("ves"));
+        assert!(!process.matches("1234"));
+        assert!(!process.matches("vesktop enable"));
         assert!(!process.matches("discord"));
     }
 }
