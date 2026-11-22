@@ -19,7 +19,7 @@ The UI is egui on wgpu with the backend pinned to Vulkan. There is no GL fallbac
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Gerenciador de processos                   Vulkan   │
+│  Close App    Processos | Hardware | Rede   Vulkan   │
 │  Buscar: [ vesktop            ]  [Atualizar] [Auto]  │
 ├──────────────────────────────────────────────────────┤
 │  PID    Nome       Comando                Memória    │
@@ -60,9 +60,11 @@ Both go through a confirmation dialog. Mis-clicking in a process list is annoyin
 
 ## Hardware
 
-The **Hardware** tab is read-only: it shows CPU (total, per core and history), RAM/swap, network rates and totals per interface, disks and temperature sensors. It never sends a signal to a process.
+The **Hardware** tab is read-only: it shows CPU (total, per core and history), RAM/swap, disks and temperature sensors. It never sends a signal to a process.
 
-Data comes from `sysinfo` and is sampled every second while **Auto** is on. **Atualizar** forces an immediate read in the active tab.
+The **Rede** tab is read-only as well: interface traffic graphs plus listening TCP/UDP ports read from `/proc/net/{tcp,tcp6,udp,udp6}`. Each port is matched to a PID by following `socket:[inode]` links in `/proc/<pid>/fd`. Ports bound outside loopback are highlighted, and the search box filters by port, PID, process name or address. Without root, ports owned by other users may show `desconhecido` as the process name.
+
+Sampling runs every second for hardware and every three seconds for ports while **Auto** is on. **Atualizar** forces an immediate read in the active tab. The sun/moon button in the header switches between the dark and light amber palettes.
 
 ## Behaviour
 
@@ -80,6 +82,7 @@ Data comes from `sysinfo` and is sampled every second while **Auto** is on. **At
 | `src/processes.rs` | `/proc` enumeration through `sysinfo`, filtering, signalling. |
 | `src/app.rs` | egui layout, tabs, selection state, delayed SIGKILL escalation. |
 | `src/hardware.rs` | `/proc` sampling through `sysinfo` and history buffers. |
+| `src/ports.rs` | Listening TCP/UDP ports from `/proc` and PID attribution. |
 | `.github/workflows/ci.yml` | Formatting, Clippy, tests, release build and artifact upload. |
 
 ## License

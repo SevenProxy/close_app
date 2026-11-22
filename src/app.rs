@@ -11,11 +11,13 @@ use sysinfo::{Pid, Signal, System};
 
 use crate::{
     hardware::{self, HISTORY_LEN, HardwareMonitor, Snapshot},
+    ports::{self, OpenPort, Transport},
     processes::{self, ProcessInfo},
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const ESCALATE_AFTER: Duration = Duration::from_secs(2);
+const PORT_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Theme {
@@ -113,33 +115,33 @@ struct Palette {
 
 impl Palette {
     const DARK: Self = Self {
-        accent: Color32::from_rgb(132, 160, 255),
-        accent_deep: Color32::from_rgb(88, 108, 190),
-        success: Color32::from_rgb(110, 214, 160),
-        warning: Color32::from_rgb(255, 193, 102),
-        danger: Color32::from_rgb(255, 116, 135),
-        surface: Color32::from_rgb(13, 15, 23),
-        surface_raised: Color32::from_rgb(20, 23, 33),
-        surface_hover: Color32::from_rgb(30, 35, 50),
-        input_bg: Color32::from_rgb(10, 12, 19),
-        border: Color32::from_rgb(39, 44, 62),
-        muted: Color32::from_rgb(137, 147, 176),
-        text: Color32::from_rgb(232, 236, 248),
+        accent: Color32::from_rgb(255, 205, 86),
+        accent_deep: Color32::from_rgb(176, 132, 30),
+        success: Color32::from_rgb(120, 220, 160),
+        warning: Color32::from_rgb(255, 160, 80),
+        danger: Color32::from_rgb(255, 110, 125),
+        surface: Color32::from_rgb(14, 14, 17),
+        surface_raised: Color32::from_rgb(26, 24, 29),
+        surface_hover: Color32::from_rgb(40, 37, 44),
+        input_bg: Color32::from_rgb(11, 11, 14),
+        border: Color32::from_rgb(56, 52, 61),
+        muted: Color32::from_rgb(154, 148, 164),
+        text: Color32::from_rgb(245, 241, 232),
     };
 
     const LIGHT: Self = Self {
-        accent: Color32::from_rgb(94, 84, 214),
-        accent_deep: Color32::from_rgb(72, 62, 176),
-        success: Color32::from_rgb(30, 132, 84),
-        warning: Color32::from_rgb(163, 103, 10),
-        danger: Color32::from_rgb(201, 52, 78),
-        surface: Color32::from_rgb(246, 247, 251),
-        surface_raised: Color32::from_rgb(255, 255, 255),
-        surface_hover: Color32::from_rgb(236, 239, 248),
+        accent: Color32::from_rgb(163, 106, 0),
+        accent_deep: Color32::from_rgb(214, 158, 32),
+        success: Color32::from_rgb(35, 130, 80),
+        warning: Color32::from_rgb(176, 104, 20),
+        danger: Color32::from_rgb(198, 52, 66),
+        surface: Color32::from_rgb(250, 247, 238),
+        surface_raised: Color32::from_rgb(255, 253, 247),
+        surface_hover: Color32::from_rgb(244, 237, 219),
         input_bg: Color32::from_rgb(255, 255, 255),
-        border: Color32::from_rgb(216, 221, 235),
-        muted: Color32::from_rgb(98, 106, 132),
-        text: Color32::from_rgb(29, 34, 52),
+        border: Color32::from_rgb(224, 216, 195),
+        muted: Color32::from_rgb(110, 102, 88),
+        text: Color32::from_rgb(40, 35, 27),
     };
 }
 
@@ -191,6 +193,7 @@ enum Tab {
     #[default]
     Processes,
     Hardware,
+    Network,
 }
 
 pub struct ProcessApp {
@@ -207,6 +210,10 @@ pub struct ProcessApp {
     status: String,
     theme: Theme,
     hardware: HardwareMonitor,
+    ports: Vec<OpenPort>,
+    port_query: String,
+    external_only: bool,
+    last_ports_refresh: Instant,
 }
 
 impl ProcessApp {
@@ -239,6 +246,10 @@ impl ProcessApp {
             status,
             theme,
             hardware,
+            ports: ports::collect(),
+            port_query: String::new(),
+            external_only: false,
+            last_ports_refresh: Instant::now(),
         }
     }
 
@@ -322,6 +333,10 @@ impl eframe::App for ProcessApp {
         if self.auto_refresh && self.hardware.due() {
             self.hardware.sample();
         }
+        if self.auto_refresh && self.last_ports_refresh.elapsed() >= PORT_REFRESH_INTERVAL {
+            self.ports = ports::collect();
+            self.last_ports_refresh = Instant::now();
+        }
         ctx.request_repaint_after(Duration::from_millis(250));
     }
 
@@ -345,12 +360,24 @@ impl eframe::App for ProcessApp {
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let theme_glyph = match self.theme {
+                            Theme::Dark => icon::SUN,
+                            Theme::Light => icon::MOON,
+                        };
+                        if ui
+                            .button(RichText::new(theme_glyph).color(palette.accent))
+                            .on_hover_text("Alternar tema claro/escuro")
+                            .clicked()
+                        {
+                            self.theme = match self.theme {
+                                Theme::Dark => Theme::Light,
+                                Theme::Light => Theme::Dark,
+                            };
+                            self.theme.apply(ui.ctx());
+                        }
                         ui.label(
-                            RichText::new(format!("{}  Vulkan", icon::CPU))
-                                .small()
-                                .color(palette.accent),
+                            RichText::new(format!("{}  Vulkan", icon::CPU)).color(palette.accent),
                         );
-                        ui.label(RichText::new("backend").small().color(palette.muted));
                     });
                 });
 
@@ -361,17 +388,30 @@ impl eframe::App for ProcessApp {
                     for (tab, glyph, label) in [
                         (Tab::Processes, icon::LIST, "Processos"),
                         (Tab::Hardware, icon::GAUGE, "Hardware"),
+                        (Tab::Network, icon::PLUG, "Rede"),
                     ] {
                         let selected = self.tab == tab;
                         let text = RichText::new(format!("{glyph}  {label}"))
                             .color(if selected {
-                                palette.text
+                                palette.accent
                             } else {
                                 palette.muted
                             })
                             .strong();
-                        if ui.selectable_label(selected, text).clicked() {
+                        let response = ui.selectable_label(selected, text);
+                        if response.clicked() {
                             self.tab = tab;
+                        }
+                        if selected {
+                            let rect = response.rect;
+                            ui.painter().rect_filled(
+                                Rect::from_min_max(
+                                    pos2(rect.left() + 6.0, rect.bottom() - 2.0),
+                                    pos2(rect.right() - 6.0, rect.bottom()),
+                                ),
+                                CornerRadius::same(2),
+                                palette.accent,
+                            );
                         }
                     }
                 });
@@ -418,18 +458,19 @@ impl eframe::App for ProcessApp {
                             RichText::new(format!("{}  Atualizar", icon::ARROWS_CLOCKWISE))
                                 .color(palette.text),
                         );
-                        if refresh
-                            .on_hover_text("Ler novamente os dados de hardware")
-                            .clicked()
-                        {
+                        if refresh.on_hover_text("Ler novamente os dados").clicked() {
                             self.hardware.sample();
+                            if self.tab == Tab::Network {
+                                self.ports = ports::collect();
+                                self.last_ports_refresh = Instant::now();
+                            }
                         }
 
                         ui.checkbox(
                             &mut self.auto_refresh,
                             RichText::new("Auto").color(palette.muted),
                         )
-                        .on_hover_text("Hardware a cada 1s, processos a cada 2s");
+                        .on_hover_text("Hardware a cada 1s, portas a cada 3s");
                     });
                 }
             });
@@ -499,9 +540,23 @@ impl eframe::App for ProcessApp {
                 shadow: Shadow::NONE,
             })
             .show(ui, |ui| {
-                if self.tab != Tab::Processes {
-                    ui_hardware(ui, &self.hardware.snapshot, palette);
-                    return;
+                match self.tab {
+                    Tab::Processes => {}
+                    Tab::Hardware => {
+                        ui_hardware(ui, &self.hardware.snapshot, palette);
+                        return;
+                    }
+                    Tab::Network => {
+                        ui_network(
+                            ui,
+                            &self.hardware.snapshot,
+                            &self.ports,
+                            &mut self.port_query,
+                            &mut self.external_only,
+                            palette,
+                        );
+                        return;
+                    }
                 }
 
                 let filtered: Vec<&ProcessInfo> = self
@@ -752,8 +807,6 @@ fn ui_hardware(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
             ui.add_space(10.0);
             hardware_memory(ui, snapshot, palette);
             ui.add_space(10.0);
-            hardware_network(ui, snapshot, palette);
-            ui.add_space(10.0);
             hardware_disks(ui, snapshot, palette);
             ui.add_space(10.0);
             hardware_sensors(ui, snapshot, palette);
@@ -925,7 +978,7 @@ fn memory_row(ui: &mut egui::Ui, label: &str, fraction: f32, value: &str, color:
     ui.end_row();
 }
 
-fn hardware_network(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+fn network_traffic_card(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
     card_frame(palette).show(ui, |ui| {
         ui.label(RichText::new(format!("{}  Rede", icon::NETWORK)).strong());
         ui.add_space(6.0);
@@ -1172,11 +1225,160 @@ fn history_bars(
     }
 }
 
+fn ui_network(
+    ui: &mut egui::Ui,
+    snapshot: &Snapshot,
+    ports: &[OpenPort],
+    query: &mut String,
+    external_only: &mut bool,
+    palette: Palette,
+) {
+    let exposed = ports.iter().filter(|port| port.is_exposed()).count();
+
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{}  Tráfego e portas", icon::PLUG))
+                .size(17.0)
+                .strong(),
+        );
+        ui.label(
+            RichText::new("somente leitura")
+                .small()
+                .color(palette.muted),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            chip(
+                ui,
+                format!("{} abertas · {} expostas", ports.len(), exposed),
+                if exposed > 0 {
+                    palette.warning
+                } else {
+                    palette.success
+                },
+            );
+        });
+    });
+
+    ui.add_space(8.0);
+
+    egui::ScrollArea::vertical()
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            network_traffic_card(ui, snapshot, palette);
+            ui.add_space(10.0);
+
+            card_frame(palette).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("{}  Portas em escuta", icon::SHIELD)).strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.checkbox(
+                            external_only,
+                            RichText::new("Somente externas").small().color(palette.muted),
+                        )
+                        .on_hover_text("Ocultar portas ligadas apenas ao loopback");
+                    });
+                });
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(icon::MAGNIFYING_GLASS).color(palette.accent));
+                    ui.add(
+                        egui::TextEdit::singleline(query)
+                            .hint_text("porta, PID, processo ou endereço")
+                            .desired_width(260.0),
+                    );
+                });
+
+                ui.add_space(8.0);
+
+                let filtered: Vec<&OpenPort> = ports
+                    .iter()
+                    .filter(|port| (!*external_only || port.is_exposed()) && port.matches(query))
+                    .collect();
+
+                if filtered.is_empty() {
+                    ui.label(RichText::new("Nenhuma porta encontrada.").small().color(palette.muted));
+                } else {
+                    egui::Grid::new("port-grid")
+                        .striped(true)
+                        .num_columns(6)
+                        .spacing([14.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.strong("Proto");
+                            ui.strong("Endereço");
+                            ui.strong("Porta");
+                            ui.strong("Estado");
+                            ui.strong("PID");
+                            ui.strong("Processo");
+                            ui.end_row();
+
+                            for port in filtered {
+                                ui.label(
+                                    RichText::new(match port.transport {
+                                        Transport::Tcp => "TCP",
+                                        Transport::Udp => "UDP",
+                                    })
+                                    .monospace()
+                                    .small()
+                                    .color(palette.accent),
+                                );
+                                ui.label(
+                                    RichText::new(&port.address)
+                                        .monospace()
+                                        .small()
+                                        .color(if port.is_exposed() {
+                                            palette.warning
+                                        } else {
+                                            palette.muted
+                                        }),
+                                );
+                                ui.label(RichText::new(port.port.to_string()).monospace().strong());
+                                ui.label(RichText::new(port.state).small().color(palette.muted));
+                                ui.label(
+                                    RichText::new(
+                                        port.pid
+                                            .map_or_else(|| "—".into(), |pid| pid.to_string()),
+                                    )
+                                    .monospace()
+                                    .small()
+                                    .color(palette.accent),
+                                );
+                                ui.label(
+                                    RichText::new(
+                                        port.process.as_deref().unwrap_or("desconhecido"),
+                                    )
+                                    .small()
+                                    .color(if port.process.is_some() {
+                                        palette.text
+                                    } else {
+                                        palette.muted
+                                    }),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                }
+
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!(
+                        "{}  Processos de outros usuários podem aparecer como desconhecidos sem root.",
+                        icon::INFO
+                    ))
+                    .small()
+                    .color(palette.muted),
+                );
+            });
+        });
+}
+
 fn edge_frame(palette: Palette) -> Frame {
     Frame {
         inner_margin: Margin::symmetric(18, 11),
-        fill: palette.surface_raised,
-        stroke: Stroke::new(1.0, palette.border),
+        fill: faded(palette.surface_raised, 238),
+        stroke: Stroke::new(1.0, faded(palette.border, 190)),
         corner_radius: CornerRadius::ZERO,
         outer_margin: Margin::ZERO,
         shadow: Shadow::NONE,
@@ -1185,23 +1387,33 @@ fn edge_frame(palette: Palette) -> Frame {
 
 fn card_frame(palette: Palette) -> Frame {
     Frame {
-        inner_margin: Margin::same(12),
-        fill: palette.surface_raised,
-        stroke: Stroke::new(1.0, palette.border),
-        corner_radius: CornerRadius::same(12),
-        outer_margin: Margin::symmetric(0, 2),
-        shadow: Shadow::NONE,
+        inner_margin: Margin::same(14),
+        fill: faded(palette.surface_raised, 205),
+        stroke: Stroke::new(1.0, faded(palette.border, 170)),
+        corner_radius: CornerRadius::same(14),
+        outer_margin: Margin::symmetric(0, 3),
+        shadow: Shadow {
+            offset: [0, 6],
+            blur: 18,
+            spread: 0,
+            color: Color32::from_black_alpha(70),
+        },
     }
 }
 
 fn modal_frame(palette: Palette) -> Frame {
     Frame {
         inner_margin: Margin::same(20),
-        fill: palette.surface_raised,
-        stroke: Stroke::new(1.0, palette.border),
+        fill: faded(palette.surface_raised, 246),
+        stroke: Stroke::new(1.0, faded(palette.accent, 110)),
         corner_radius: CornerRadius::same(16),
         outer_margin: Margin::ZERO,
-        shadow: Shadow::NONE,
+        shadow: Shadow {
+            offset: [0, 12],
+            blur: 32,
+            spread: 0,
+            color: Color32::from_black_alpha(120),
+        },
     }
 }
 
