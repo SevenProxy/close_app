@@ -67,9 +67,9 @@ impl HardwareMonitor {
     pub fn new() -> Self {
         Self {
             system: System::new(),
-            components: Components::new(),
-            disks: Disks::new(),
-            networks: Networks::new(),
+            components: Components::new_with_refreshed_list(),
+            disks: Disks::new_with_refreshed_list(),
+            networks: Networks::new_with_refreshed_list(),
             last_sample: None,
             snapshot: Snapshot::default(),
         }
@@ -91,6 +91,17 @@ impl HardwareMonitor {
         self.last_sample = Some(now);
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
+
+        if self.components.list().is_empty() {
+            self.components.refresh_list();
+        }
+        if self.disks.list().is_empty() {
+            self.disks.refresh_list();
+        }
+        if self.networks.list().is_empty() {
+            self.networks.refresh_list();
+        }
+
         self.components.refresh();
         self.disks.refresh();
         self.networks.refresh();
