@@ -18,6 +18,9 @@ use crate::{
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const ESCALATE_AFTER: Duration = Duration::from_secs(2);
 const PORT_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+const HARDWARE_CARD_HEIGHT: f32 = 286.0;
+const HARDWARE_SMALL_CARD_HEIGHT: f32 = 220.0;
+const CARD_INNER_HEIGHT: f32 = 30.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Theme {
@@ -613,6 +616,7 @@ impl eframe::App for ProcessApp {
 
                 card_frame(palette).show(ui, |ui| {
                     egui::ScrollArea::vertical()
+                        .id_salt("processes-scroll")
                         .auto_shrink(false)
                         .show(ui, |ui| {
                             egui::Grid::new("process-grid")
@@ -723,6 +727,7 @@ impl ProcessApp {
                 ui.add_space(10.0);
 
                 egui::ScrollArea::vertical()
+                    .id_salt("confirmation-scroll")
                     .max_height(180.0)
                     .show(ui, |ui| {
                         for line in &affected {
@@ -799,17 +804,25 @@ fn ui_hardware(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
     ui.add_space(8.0);
 
     egui::ScrollArea::vertical()
+        .id_salt("hardware-scroll")
         .auto_shrink(false)
         .show(ui, |ui| {
             hardware_overview(ui, snapshot, palette);
             ui.add_space(10.0);
-            hardware_cpu(ui, snapshot, palette);
+            ui.columns(2, |columns| {
+                columns[0].vertical(|ui| hardware_cpu(ui, snapshot, palette, HARDWARE_CARD_HEIGHT));
+                columns[1]
+                    .vertical(|ui| hardware_memory(ui, snapshot, palette, HARDWARE_CARD_HEIGHT));
+            });
             ui.add_space(10.0);
-            hardware_memory(ui, snapshot, palette);
-            ui.add_space(10.0);
-            hardware_disks(ui, snapshot, palette);
-            ui.add_space(10.0);
-            hardware_sensors(ui, snapshot, palette);
+            ui.columns(2, |columns| {
+                columns[0].vertical(|ui| {
+                    hardware_disks(ui, snapshot, palette, HARDWARE_SMALL_CARD_HEIGHT)
+                });
+                columns[1].vertical(|ui| {
+                    hardware_sensors(ui, snapshot, palette, HARDWARE_SMALL_CARD_HEIGHT)
+                });
+            });
         });
 }
 
@@ -851,7 +864,7 @@ fn hardware_overview(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
     });
 }
 
-fn hardware_cpu(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+fn hardware_cpu(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette, height: f32) {
     card_frame(palette).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("{}  CPU", icon::CPU)).strong());
@@ -879,39 +892,45 @@ fn hardware_cpu(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
 
         ui.add_space(12.0);
         ui.label(RichText::new("Núcleos").small().color(palette.muted));
-        egui::Grid::new("cpu-cores")
-            .num_columns(2)
-            .spacing([14.0, 4.0])
+        egui::ScrollArea::vertical()
+            .id_salt("cpu-cores-scroll")
+            .max_height(124.0)
             .show(ui, |ui| {
-                for (index, usage) in snapshot.cpu_cores.iter().enumerate() {
-                    ui.label(
-                        RichText::new(format!("CPU {index}"))
-                            .monospace()
-                            .small()
-                            .color(palette.muted),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::ProgressBar::new(usage / 100.0)
-                                .desired_width(110.0)
-                                .desired_height(6.0)
-                                .corner_radius(CornerRadius::same(4))
-                                .fill(palette.accent),
-                        );
-                        ui.label(
-                            RichText::new(format!("{usage:.0}%"))
-                                .monospace()
-                                .small()
-                                .color(palette.muted),
-                        );
+                egui::Grid::new("cpu-cores")
+                    .num_columns(2)
+                    .spacing([14.0, 4.0])
+                    .show(ui, |ui| {
+                        for (index, usage) in snapshot.cpu_cores.iter().enumerate() {
+                            ui.label(
+                                RichText::new(format!("CPU {index}"))
+                                    .monospace()
+                                    .small()
+                                    .color(palette.muted),
+                            );
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::ProgressBar::new(usage / 100.0)
+                                        .desired_width(110.0)
+                                        .desired_height(6.0)
+                                        .corner_radius(CornerRadius::same(4))
+                                        .fill(palette.accent),
+                                );
+                                ui.label(
+                                    RichText::new(format!("{usage:.0}%"))
+                                        .monospace()
+                                        .small()
+                                        .color(palette.muted),
+                                );
+                            });
+                            ui.end_row();
+                        }
                     });
-                    ui.end_row();
-                }
             });
+        fill_to(ui, height - CARD_INNER_HEIGHT);
     });
 }
 
-fn hardware_memory(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+fn hardware_memory(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette, height: f32) {
     card_frame(palette).show(ui, |ui| {
         ui.label(RichText::new(format!("{}  Memória", icon::MEMORY)).strong());
         ui.add_space(6.0);
@@ -958,6 +977,7 @@ fn hardware_memory(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
             44.0,
             100.0,
         );
+        fill_to(ui, height - CARD_INNER_HEIGHT);
     });
 }
 
@@ -1071,7 +1091,7 @@ fn network_traffic_card(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette
     });
 }
 
-fn hardware_disks(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+fn hardware_disks(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette, height: f32) {
     card_frame(palette).show(ui, |ui| {
         ui.label(RichText::new(format!("{}  Discos", icon::HARD_DRIVES)).strong());
         ui.add_space(6.0);
@@ -1082,54 +1102,62 @@ fn hardware_disks(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
                     .small()
                     .color(palette.muted),
             );
-            return;
+        } else {
+            egui::ScrollArea::vertical()
+                .id_salt("disks-scroll")
+                .max_height(150.0)
+                .show(ui, |ui| {
+                    egui::Grid::new("disk-grid")
+                        .num_columns(3)
+                        .spacing([14.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.strong("Disco");
+                            ui.strong("Montagem");
+                            ui.strong("Uso");
+                            ui.end_row();
+
+                            for disk in &snapshot.disks {
+                                let used = disk.total.saturating_sub(disk.available);
+                                let fraction = hardware::fraction(used, disk.total);
+                                ui.label(
+                                    RichText::new(truncate(&disk.name, 18)).monospace().small(),
+                                );
+                                ui.label(
+                                    RichText::new(truncate(&disk.mount, 24))
+                                        .small()
+                                        .color(palette.muted),
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::ProgressBar::new(fraction)
+                                            .desired_width(80.0)
+                                            .desired_height(6.0)
+                                            .corner_radius(CornerRadius::same(4))
+                                            .fill(palette.accent),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} / {}  ({:.0}%)",
+                                            hardware::format_bytes(used),
+                                            hardware::format_bytes(disk.total),
+                                            fraction * 100.0
+                                        ))
+                                        .small()
+                                        .monospace()
+                                        .color(palette.muted),
+                                    );
+                                });
+                                ui.end_row();
+                            }
+                        });
+                });
         }
 
-        egui::Grid::new("disk-grid")
-            .num_columns(3)
-            .spacing([14.0, 4.0])
-            .show(ui, |ui| {
-                ui.strong("Disco");
-                ui.strong("Montagem");
-                ui.strong("Uso");
-                ui.end_row();
-
-                for disk in &snapshot.disks {
-                    let used = disk.total.saturating_sub(disk.available);
-                    let fraction = hardware::fraction(used, disk.total);
-                    ui.label(RichText::new(truncate(&disk.name, 18)).monospace().small());
-                    ui.label(
-                        RichText::new(truncate(&disk.mount, 24))
-                            .small()
-                            .color(palette.muted),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::ProgressBar::new(fraction)
-                                .desired_width(80.0)
-                                .desired_height(6.0)
-                                .corner_radius(CornerRadius::same(4))
-                                .fill(palette.accent),
-                        );
-                        ui.label(
-                            RichText::new(format!(
-                                "{} / {}  ({:.0}%)",
-                                hardware::format_bytes(used),
-                                hardware::format_bytes(disk.total),
-                                fraction * 100.0
-                            ))
-                            .small()
-                            .monospace()
-                            .color(palette.muted),
-                        );
-                    });
-                    ui.end_row();
-                }
-            });
+        fill_to(ui, height - CARD_INNER_HEIGHT);
     });
 }
 
-fn hardware_sensors(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+fn hardware_sensors(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette, height: f32) {
     card_frame(palette).show(ui, |ui| {
         ui.label(RichText::new(format!("{}  Temperatura", icon::THERMOMETER)).strong());
         ui.add_space(6.0);
@@ -1140,29 +1168,35 @@ fn hardware_sensors(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
                     .small()
                     .color(palette.muted),
             );
-            return;
+        } else {
+            egui::ScrollArea::vertical()
+                .id_salt("sensors-scroll")
+                .max_height(150.0)
+                .show(ui, |ui| {
+                    egui::Grid::new("sensor-grid")
+                        .num_columns(2)
+                        .spacing([14.0, 4.0])
+                        .show(ui, |ui| {
+                            for sensor in &snapshot.sensors {
+                                ui.label(RichText::new(truncate(&sensor.label, 32)).small());
+                                ui.label(
+                                    RichText::new(format!("{:.1} °C", sensor.temperature))
+                                        .monospace()
+                                        .small()
+                                        .color(temperature_color(
+                                            sensor.temperature,
+                                            sensor.max,
+                                            sensor.critical,
+                                            palette,
+                                        )),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                });
         }
 
-        egui::Grid::new("sensor-grid")
-            .num_columns(2)
-            .spacing([14.0, 4.0])
-            .show(ui, |ui| {
-                for sensor in &snapshot.sensors {
-                    ui.label(RichText::new(truncate(&sensor.label, 32)).small());
-                    ui.label(
-                        RichText::new(format!("{:.1} °C", sensor.temperature))
-                            .monospace()
-                            .small()
-                            .color(temperature_color(
-                                sensor.temperature,
-                                sensor.max,
-                                sensor.critical,
-                                palette,
-                            )),
-                    );
-                    ui.end_row();
-                }
-            });
+        fill_to(ui, height - CARD_INNER_HEIGHT);
     });
 }
 
@@ -1178,6 +1212,13 @@ fn temperature_color(
         palette.warning
     } else {
         palette.success
+    }
+}
+
+fn fill_to(ui: &mut egui::Ui, height: f32) {
+    let used = ui.min_rect().height();
+    if used < height {
+        ui.add_space(height - used);
     }
 }
 
@@ -1262,6 +1303,7 @@ fn ui_network(
     ui.add_space(8.0);
 
     egui::ScrollArea::vertical()
+        .id_salt("network-scroll")
         .auto_shrink(false)
         .show(ui, |ui| {
             network_traffic_card(ui, snapshot, palette);
