@@ -1,4 +1,5 @@
 mod app;
+mod hardware;
 mod processes;
 
 use app::ProcessApp;

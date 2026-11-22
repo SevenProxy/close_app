@@ -58,6 +58,12 @@ Tick the processes you care about, then pick an action at the bottom:
 
 Both go through a confirmation dialog. Mis-clicking in a process list is annoying.
 
+## Hardware
+
+The **Hardware** tab is read-only: it shows CPU (total, per core and history), RAM/swap, network rates and totals per interface, disks and temperature sensors. It never sends a signal to a process.
+
+Data comes from `sysinfo` and is sampled every second while **Auto** is on. **Atualizar** forces an immediate read in the active tab.
+
 ## Behaviour
 
 - The footer shows the crate version and the git hash it was built from. A `-dirty` suffix means the source tree had uncommitted changes.
@@ -72,7 +78,8 @@ Both go through a confirmation dialog. Mis-clicking in a process list is annoyin
 | --- | --- |
 | `src/main.rs` | Window setup and the Vulkan backend pin. |
 | `src/processes.rs` | `/proc` enumeration through `sysinfo`, filtering, signalling. |
-| `src/app.rs` | egui layout, selection state, delayed SIGKILL escalation. |
+| `src/app.rs` | egui layout, tabs, selection state, delayed SIGKILL escalation. |
+| `src/hardware.rs` | `/proc` sampling through `sysinfo` and history buffers. |
 | `.github/workflows/ci.yml` | Formatting, Clippy, tests, release build and artifact upload. |
 
 ## License

@@ -1,13 +1,18 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     time::{Duration, Instant},
 };
 
-use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Shadow, Stroke, Visuals};
+use eframe::egui::{
+    self, Color32, CornerRadius, Frame, Margin, Rect, RichText, Shadow, Stroke, Vec2, Visuals, pos2,
+};
 use egui_phosphor::{Variant, regular as icon};
 use sysinfo::{Pid, Signal, System};
 
-use crate::processes::{self, ProcessInfo};
+use crate::{
+    hardware::{self, HISTORY_LEN, HardwareMonitor, Snapshot},
+    processes::{self, ProcessInfo},
+};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const ESCALATE_AFTER: Duration = Duration::from_secs(2);
@@ -94,6 +99,8 @@ impl Theme {
 struct Palette {
     accent: Color32,
     accent_deep: Color32,
+    success: Color32,
+    warning: Color32,
     danger: Color32,
     surface: Color32,
     surface_raised: Color32,
@@ -108,6 +115,8 @@ impl Palette {
     const DARK: Self = Self {
         accent: Color32::from_rgb(132, 160, 255),
         accent_deep: Color32::from_rgb(88, 108, 190),
+        success: Color32::from_rgb(110, 214, 160),
+        warning: Color32::from_rgb(255, 193, 102),
         danger: Color32::from_rgb(255, 116, 135),
         surface: Color32::from_rgb(13, 15, 23),
         surface_raised: Color32::from_rgb(20, 23, 33),
@@ -121,6 +130,8 @@ impl Palette {
     const LIGHT: Self = Self {
         accent: Color32::from_rgb(94, 84, 214),
         accent_deep: Color32::from_rgb(72, 62, 176),
+        success: Color32::from_rgb(30, 132, 84),
+        warning: Color32::from_rgb(163, 103, 10),
         danger: Color32::from_rgb(201, 52, 78),
         surface: Color32::from_rgb(246, 247, 251),
         surface_raised: Color32::from_rgb(255, 255, 255),
@@ -175,7 +186,15 @@ impl Action {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Tab {
+    #[default]
+    Processes,
+    Hardware,
+}
+
 pub struct ProcessApp {
+    tab: Tab,
     system: System,
     own_pid: Pid,
     processes: Vec<ProcessInfo>,
@@ -187,6 +206,7 @@ pub struct ProcessApp {
     escalating: Vec<(Pid, Instant)>,
     status: String,
     theme: Theme,
+    hardware: HardwareMonitor,
 }
 
 impl ProcessApp {
@@ -202,7 +222,11 @@ impl ProcessApp {
         let processes = processes::collect(&mut system);
         let status = format!("{} processos encontrados.", processes.len());
 
+        let mut hardware = HardwareMonitor::new();
+        hardware.sample();
+
         Self {
+            tab: Tab::default(),
             system,
             own_pid: Pid::from_u32(std::process::id()),
             processes,
@@ -214,6 +238,7 @@ impl ProcessApp {
             escalating: Vec::new(),
             status,
             theme,
+            hardware,
         }
     }
 
@@ -294,6 +319,9 @@ impl eframe::App for ProcessApp {
             self.refresh();
         }
         self.escalate_stale();
+        if self.auto_refresh && self.hardware.due() {
+            self.hardware.sample();
+        }
         ctx.request_repaint_after(Duration::from_millis(250));
     }
 
@@ -329,39 +357,81 @@ impl eframe::App for ProcessApp {
                 ui.add_space(2.0);
 
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(icon::MAGNIFYING_GLASS)
-                            .color(palette.accent)
-                            .size(16.0),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.query)
-                            .hint_text("nome exato ou PID — ex.: vesktop")
-                            .desired_width(300.0),
-                    );
-
-                    let refresh = ui.button(
-                        RichText::new(format!("{}  Atualizar", icon::ARROWS_CLOCKWISE))
-                            .color(palette.text),
-                    );
-                    if refresh
-                        .on_hover_text("Recarregar a lista de processos")
-                        .clicked()
-                    {
-                        self.refresh();
-                    }
-
-                    ui.checkbox(
-                        &mut self.auto_refresh,
-                        RichText::new("Auto").color(palette.muted),
-                    )
-                    .on_hover_text("Atualizar a cada 2 segundos");
-
-                    let clear = ui.button(RichText::new(icon::BROOM).color(palette.muted));
-                    if clear.on_hover_text("Limpar seleção").clicked() {
-                        self.selected.clear();
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    for (tab, glyph, label) in [
+                        (Tab::Processes, icon::LIST, "Processos"),
+                        (Tab::Hardware, icon::GAUGE, "Hardware"),
+                    ] {
+                        let selected = self.tab == tab;
+                        let text = RichText::new(format!("{glyph}  {label}"))
+                            .color(if selected {
+                                palette.text
+                            } else {
+                                palette.muted
+                            })
+                            .strong();
+                        if ui.selectable_label(selected, text).clicked() {
+                            self.tab = tab;
+                        }
                     }
                 });
+
+                if self.tab == Tab::Processes {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(icon::MAGNIFYING_GLASS)
+                                .color(palette.accent)
+                                .size(16.0),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.query)
+                                .hint_text("nome exato ou PID — ex.: vesktop")
+                                .desired_width(300.0),
+                        );
+
+                        let refresh = ui.button(
+                            RichText::new(format!("{}  Atualizar", icon::ARROWS_CLOCKWISE))
+                                .color(palette.text),
+                        );
+                        if refresh
+                            .on_hover_text("Recarregar processos e dados de hardware")
+                            .clicked()
+                        {
+                            self.refresh();
+                            self.hardware.sample();
+                        }
+
+                        ui.checkbox(
+                            &mut self.auto_refresh,
+                            RichText::new("Auto").color(palette.muted),
+                        )
+                        .on_hover_text("Processos a cada 2s, hardware a cada 1s");
+
+                        let clear = ui.button(RichText::new(icon::BROOM).color(palette.muted));
+                        if clear.on_hover_text("Limpar seleção").clicked() {
+                            self.selected.clear();
+                        }
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        let refresh = ui.button(
+                            RichText::new(format!("{}  Atualizar", icon::ARROWS_CLOCKWISE))
+                                .color(palette.text),
+                        );
+                        if refresh
+                            .on_hover_text("Ler novamente os dados de hardware")
+                            .clicked()
+                        {
+                            self.hardware.sample();
+                        }
+
+                        ui.checkbox(
+                            &mut self.auto_refresh,
+                            RichText::new("Auto").color(palette.muted),
+                        )
+                        .on_hover_text("Hardware a cada 1s, processos a cada 2s");
+                    });
+                }
             });
 
         egui::Panel::bottom("footer")
@@ -369,29 +439,37 @@ impl eframe::App for ProcessApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let count = self.selected.len();
-                    ui.add_enabled_ui(count > 0, |ui| {
-                        let term = ui.button(
-                            RichText::new(format!("{}  Encerrar", icon::HOURGLASS))
-                                .color(palette.text),
-                        );
-                        if term.on_hover_text("SIGTERM, com SIGKILL após 2s").clicked() {
-                            self.pending_action = Some(Action::Terminate);
-                        }
+                    if self.tab == Tab::Processes {
+                        ui.add_enabled_ui(count > 0, |ui| {
+                            let term = ui.button(
+                                RichText::new(format!("{}  Encerrar", icon::HOURGLASS))
+                                    .color(palette.text),
+                            );
+                            if term.on_hover_text("SIGTERM, com SIGKILL após 2s").clicked() {
+                                self.pending_action = Some(Action::Terminate);
+                            }
 
-                        let kill = ui.button(
-                            RichText::new(format!("{}  Forçar", icon::LIGHTNING))
-                                .color(palette.danger),
-                        );
-                        if kill.on_hover_text("SIGKILL imediato").clicked() {
-                            self.pending_action = Some(Action::Kill);
-                        }
-                    });
+                            let kill = ui.button(
+                                RichText::new(format!("{}  Forçar", icon::LIGHTNING))
+                                    .color(palette.danger),
+                            );
+                            if kill.on_hover_text("SIGKILL imediato").clicked() {
+                                self.pending_action = Some(Action::Kill);
+                            }
+                        });
 
-                    ui.label(
-                        RichText::new(format!("{count} selecionado(s)"))
-                            .color(palette.muted)
-                            .small(),
-                    );
+                        ui.label(
+                            RichText::new(format!("{count} selecionado(s)"))
+                                .color(palette.muted)
+                                .small(),
+                        );
+                    } else {
+                        ui.label(
+                            RichText::new(format!("{}  Somente leitura", icon::INFO))
+                                .color(palette.success)
+                                .small(),
+                        );
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         chip(
@@ -421,6 +499,11 @@ impl eframe::App for ProcessApp {
                 shadow: Shadow::NONE,
             })
             .show(ui, |ui| {
+                if self.tab != Tab::Processes {
+                    ui_hardware(ui, &self.hardware.snapshot, palette);
+                    return;
+                }
+
                 let filtered: Vec<&ProcessInfo> = self
                     .processes
                     .iter()
@@ -633,6 +716,458 @@ impl ProcessApp {
             self.pending_action = None;
         } else if response.should_close() {
             self.pending_action = None;
+        }
+    }
+}
+
+fn ui_hardware(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{}  Uso de hardware", icon::CHART_LINE_UP))
+                .size(17.0)
+                .strong(),
+        );
+        ui.label(
+            RichText::new("somente leitura")
+                .small()
+                .color(palette.muted),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(format!("{}  amostragem a cada 1s", icon::ARROWS_CLOCKWISE))
+                    .small()
+                    .color(palette.muted),
+            );
+        });
+    });
+
+    ui.add_space(8.0);
+
+    egui::ScrollArea::vertical()
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            hardware_overview(ui, snapshot, palette);
+            ui.add_space(10.0);
+            hardware_cpu(ui, snapshot, palette);
+            ui.add_space(10.0);
+            hardware_memory(ui, snapshot, palette);
+            ui.add_space(10.0);
+            hardware_network(ui, snapshot, palette);
+            ui.add_space(10.0);
+            hardware_disks(ui, snapshot, palette);
+            ui.add_space(10.0);
+            hardware_sensors(ui, snapshot, palette);
+        });
+}
+
+fn hardware_overview(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+    card_frame(palette).show(ui, |ui| {
+        let load = snapshot.load;
+        let fields = [
+            ("Host", truncate(&snapshot.hostname, 28)),
+            ("Sistema", truncate(&snapshot.os, 28)),
+            ("Kernel", truncate(&snapshot.kernel, 28)),
+            ("Uptime", hardware::format_uptime(snapshot.uptime)),
+            (
+                "Carga",
+                format!("{:.2} / {:.2} / {:.2}", load[0], load[1], load[2]),
+            ),
+            (
+                "Núcleos",
+                format!(
+                    "{} físicos / {} lógicos",
+                    snapshot
+                        .physical_cores
+                        .map_or_else(|| "?".into(), |count| count.to_string()),
+                    snapshot.logical_cores
+                ),
+            ),
+        ];
+
+        ui.columns(3, |columns| {
+            let column_count = columns.len();
+            for (index, (label, value)) in fields.into_iter().enumerate() {
+                let column = &mut columns[index % column_count];
+                if index >= column_count {
+                    column.add_space(6.0);
+                }
+                column.label(RichText::new(label).small().color(palette.muted));
+                column.label(RichText::new(value).small().strong());
+            }
+        });
+    });
+}
+
+fn hardware_cpu(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+    card_frame(palette).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{}  CPU", icon::CPU)).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("{:.0}%", snapshot.cpu_usage))
+                        .monospace()
+                        .strong()
+                        .color(palette.accent),
+                );
+            });
+        });
+
+        ui.add_space(5.0);
+        meter(ui, snapshot.cpu_usage / 100.0, palette.accent);
+        ui.add_space(5.0);
+        history_bars(
+            ui,
+            &snapshot.cpu_history,
+            palette.accent,
+            palette,
+            56.0,
+            100.0,
+        );
+
+        ui.add_space(12.0);
+        ui.label(RichText::new("Núcleos").small().color(palette.muted));
+        egui::Grid::new("cpu-cores")
+            .num_columns(2)
+            .spacing([14.0, 4.0])
+            .show(ui, |ui| {
+                for (index, usage) in snapshot.cpu_cores.iter().enumerate() {
+                    ui.label(
+                        RichText::new(format!("CPU {index}"))
+                            .monospace()
+                            .small()
+                            .color(palette.muted),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::ProgressBar::new(usage / 100.0)
+                                .desired_width(110.0)
+                                .desired_height(6.0)
+                                .corner_radius(CornerRadius::same(4))
+                                .fill(palette.accent),
+                        );
+                        ui.label(
+                            RichText::new(format!("{usage:.0}%"))
+                                .monospace()
+                                .small()
+                                .color(palette.muted),
+                        );
+                    });
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+fn hardware_memory(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+    card_frame(palette).show(ui, |ui| {
+        ui.label(RichText::new(format!("{}  Memória", icon::MEMORY)).strong());
+        ui.add_space(6.0);
+
+        let ram_fraction = hardware::fraction(snapshot.memory_used, snapshot.memory_total);
+        let swap_fraction = hardware::fraction(snapshot.swap_used, snapshot.swap_total);
+
+        egui::Grid::new("memory-grid")
+            .num_columns(3)
+            .spacing([14.0, 6.0])
+            .show(ui, |ui| {
+                memory_row(
+                    ui,
+                    "RAM",
+                    ram_fraction,
+                    &format!(
+                        "{} / {}  ({:.0}%)",
+                        hardware::format_bytes(snapshot.memory_used),
+                        hardware::format_bytes(snapshot.memory_total),
+                        ram_fraction * 100.0
+                    ),
+                    palette.success,
+                );
+                memory_row(
+                    ui,
+                    "Swap",
+                    swap_fraction,
+                    &format!(
+                        "{} / {}  ({:.0}%)",
+                        hardware::format_bytes(snapshot.swap_used),
+                        hardware::format_bytes(snapshot.swap_total),
+                        swap_fraction * 100.0
+                    ),
+                    palette.warning,
+                );
+            });
+
+        ui.add_space(8.0);
+        history_bars(
+            ui,
+            &snapshot.memory_history,
+            palette.success,
+            palette,
+            44.0,
+            100.0,
+        );
+    });
+}
+
+fn memory_row(ui: &mut egui::Ui, label: &str, fraction: f32, value: &str, color: Color32) {
+    ui.label(
+        RichText::new(label)
+            .small()
+            .color(ui.visuals().weak_text_color()),
+    );
+    ui.add(
+        egui::ProgressBar::new(fraction)
+            .desired_width(140.0)
+            .desired_height(9.0)
+            .corner_radius(CornerRadius::same(5))
+            .fill(color),
+    );
+    ui.label(RichText::new(value).monospace().small());
+    ui.end_row();
+}
+
+fn hardware_network(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+    card_frame(palette).show(ui, |ui| {
+        ui.label(RichText::new(format!("{}  Rede", icon::NETWORK)).strong());
+        ui.add_space(6.0);
+
+        let scale = snapshot
+            .rx_history
+            .iter()
+            .chain(snapshot.tx_history.iter())
+            .copied()
+            .fold(1.0, f32::max);
+
+        ui.columns(2, |columns| {
+            columns[0].vertical(|ui| {
+                ui.label(RichText::new("Recebido").small().color(palette.accent));
+                ui.label(
+                    RichText::new(hardware::format_rate(
+                        snapshot.rx_history.back().copied().unwrap_or(0.0),
+                    ))
+                    .strong()
+                    .monospace(),
+                );
+                history_bars(
+                    ui,
+                    &snapshot.rx_history,
+                    palette.accent,
+                    palette,
+                    48.0,
+                    scale,
+                );
+            });
+            columns[1].vertical(|ui| {
+                ui.label(RichText::new("Enviado").small().color(palette.accent_deep));
+                ui.label(
+                    RichText::new(hardware::format_rate(
+                        snapshot.tx_history.back().copied().unwrap_or(0.0),
+                    ))
+                    .strong()
+                    .monospace(),
+                );
+                history_bars(
+                    ui,
+                    &snapshot.tx_history,
+                    palette.accent_deep,
+                    palette,
+                    48.0,
+                    scale,
+                );
+            });
+        });
+
+        if !snapshot.interfaces.is_empty() {
+            ui.add_space(10.0);
+            egui::Grid::new("network-grid")
+                .num_columns(3)
+                .spacing([14.0, 4.0])
+                .show(ui, |ui| {
+                    ui.strong("Interface");
+                    ui.strong("RX");
+                    ui.strong("TX");
+                    ui.end_row();
+
+                    for interface in &snapshot.interfaces {
+                        ui.label(
+                            RichText::new(truncate(&interface.name, 24))
+                                .monospace()
+                                .small(),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{}  ·  {}",
+                                hardware::format_rate(interface.rx_rate),
+                                hardware::format_bytes(interface.total_received)
+                            ))
+                            .small()
+                            .color(palette.muted),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{}  ·  {}",
+                                hardware::format_rate(interface.tx_rate),
+                                hardware::format_bytes(interface.total_transmitted)
+                            ))
+                            .small()
+                            .color(palette.muted),
+                        );
+                        ui.end_row();
+                    }
+                });
+        }
+    });
+}
+
+fn hardware_disks(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+    card_frame(palette).show(ui, |ui| {
+        ui.label(RichText::new(format!("{}  Discos", icon::HARD_DRIVES)).strong());
+        ui.add_space(6.0);
+
+        if snapshot.disks.is_empty() {
+            ui.label(
+                RichText::new("Nenhum disco encontrado.")
+                    .small()
+                    .color(palette.muted),
+            );
+            return;
+        }
+
+        egui::Grid::new("disk-grid")
+            .num_columns(3)
+            .spacing([14.0, 4.0])
+            .show(ui, |ui| {
+                ui.strong("Disco");
+                ui.strong("Montagem");
+                ui.strong("Uso");
+                ui.end_row();
+
+                for disk in &snapshot.disks {
+                    let used = disk.total.saturating_sub(disk.available);
+                    let fraction = hardware::fraction(used, disk.total);
+                    ui.label(RichText::new(truncate(&disk.name, 18)).monospace().small());
+                    ui.label(
+                        RichText::new(truncate(&disk.mount, 24))
+                            .small()
+                            .color(palette.muted),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::ProgressBar::new(fraction)
+                                .desired_width(80.0)
+                                .desired_height(6.0)
+                                .corner_radius(CornerRadius::same(4))
+                                .fill(palette.accent),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{} / {}  ({:.0}%)",
+                                hardware::format_bytes(used),
+                                hardware::format_bytes(disk.total),
+                                fraction * 100.0
+                            ))
+                            .small()
+                            .monospace()
+                            .color(palette.muted),
+                        );
+                    });
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+fn hardware_sensors(ui: &mut egui::Ui, snapshot: &Snapshot, palette: Palette) {
+    card_frame(palette).show(ui, |ui| {
+        ui.label(RichText::new(format!("{}  Temperatura", icon::THERMOMETER)).strong());
+        ui.add_space(6.0);
+
+        if snapshot.sensors.is_empty() {
+            ui.label(
+                RichText::new("Nenhum sensor de temperatura disponível.")
+                    .small()
+                    .color(palette.muted),
+            );
+            return;
+        }
+
+        egui::Grid::new("sensor-grid")
+            .num_columns(2)
+            .spacing([14.0, 4.0])
+            .show(ui, |ui| {
+                for sensor in &snapshot.sensors {
+                    ui.label(RichText::new(truncate(&sensor.label, 32)).small());
+                    ui.label(
+                        RichText::new(format!("{:.1} °C", sensor.temperature))
+                            .monospace()
+                            .small()
+                            .color(temperature_color(
+                                sensor.temperature,
+                                sensor.max,
+                                sensor.critical,
+                                palette,
+                            )),
+                    );
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+fn temperature_color(
+    temperature: f32,
+    max: f32,
+    critical: Option<f32>,
+    palette: Palette,
+) -> Color32 {
+    if critical.is_some_and(|limit| temperature >= limit) {
+        palette.danger
+    } else if max > 0.0 && temperature >= max * 0.85 {
+        palette.warning
+    } else {
+        palette.success
+    }
+}
+
+fn meter(ui: &mut egui::Ui, fraction: f32, color: Color32) {
+    ui.add(
+        egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
+            .desired_width(ui.available_width())
+            .desired_height(9.0)
+            .corner_radius(CornerRadius::same(5))
+            .fill(color),
+    );
+}
+
+fn history_bars(
+    ui: &mut egui::Ui,
+    values: &VecDeque<f32>,
+    color: Color32,
+    palette: Palette,
+    height: f32,
+    max: f32,
+) {
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(6), palette.input_bg);
+
+    let slot = rect.width() / HISTORY_LEN as f32;
+    let max = max.max(0.001);
+    for (index, value) in values.iter().rev().take(HISTORY_LEN).enumerate() {
+        let fraction = (*value / max).clamp(0.0, 1.0);
+        if fraction <= 0.0 {
+            continue;
+        }
+
+        let x = rect.right() - (index + 1) as f32 * slot;
+        let bar = Rect::from_min_max(
+            pos2(x + 0.5, rect.bottom() - fraction * rect.height()),
+            pos2(x + slot - 0.5, rect.bottom()),
+        );
+        if bar.width() > 0.0 {
+            painter.rect_filled(bar, CornerRadius::ZERO, color);
         }
     }
 }
